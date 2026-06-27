@@ -57,6 +57,10 @@ export class Editor {
   private mouseWorld: Vec2 = { x: 0, y: 0 };
   private hoverPin: PinRef | null = null;
 
+  // multi-touch bookkeeping (Pointer Events)
+  private pointers = new Map<number, Vec2>();
+  private pinch: { dist: number; scale: number; worldX: number; worldY: number } | null = null;
+
   private sim: SimResult = { inputs: new Map(), outputs: new Map() };
   private lastTime = performance.now();
   onChange: () => void = () => {};
@@ -169,9 +173,10 @@ export class Editor {
 
   private bindEvents() {
     window.addEventListener("resize", this.resize);
-    this.canvas.addEventListener("mousedown", this.onDown);
-    window.addEventListener("mousemove", this.onMove);
-    window.addEventListener("mouseup", this.onUp);
+    this.canvas.addEventListener("pointerdown", this.onDown);
+    window.addEventListener("pointermove", this.onMove);
+    window.addEventListener("pointerup", this.onUp);
+    window.addEventListener("pointercancel", this.onUp);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
     this.canvas.addEventListener("contextmenu", (e) => e.preventDefault());
     window.addEventListener("keydown", (e) => {
@@ -202,8 +207,50 @@ export class Editor {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
-  private onDown = (e: MouseEvent) => {
+  private beginPinch() {
+    const pts = [...this.pointers.values()];
+    if (pts.length < 2) return;
+    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+    this.pinch = {
+      dist: dist || 1,
+      scale: this.camera.scale,
+      worldX: (mid.x - this.camera.x) / this.camera.scale,
+      worldY: (mid.y - this.camera.y) / this.camera.scale,
+    };
+  }
+
+  private updatePinch() {
+    const pts = [...this.pointers.values()];
+    if (pts.length < 2 || !this.pinch) return;
+    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+    const ns = Math.min(3, Math.max(0.3, (this.pinch.scale * dist) / this.pinch.dist));
+    this.camera.scale = ns;
+    this.camera.x = mid.x - this.pinch.worldX * ns;
+    this.camera.y = mid.y - this.pinch.worldY * ns;
+  }
+
+  private onDown = (e: PointerEvent) => {
     const s = this.localPos(e);
+    this.pointers.set(e.pointerId, s);
+    try {
+      this.canvas.setPointerCapture(e.pointerId);
+    } catch {
+      /* pointer may already be released or synthetic — safe to ignore */
+    }
+
+    // Second finger down -> start pinch-zoom, abort any single-pointer action.
+    if (this.pointers.size === 2) {
+      this.mode = "idle";
+      this.wireFrom = null;
+      this.hoverPin = null;
+      this.pressedComp = null;
+      this.beginPinch();
+      return;
+    }
+    if (this.pointers.size > 2) return;
+
     const world = this.screenToWorld(s.x, s.y);
     this.downScreen = s;
     this.panLast = s;
@@ -242,8 +289,15 @@ export class Editor {
     this.mode = "pan";
   };
 
-  private onMove = (e: MouseEvent) => {
+  private onMove = (e: PointerEvent) => {
     const s = this.localPos(e);
+    if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, s);
+
+    if (this.pointers.size >= 2) {
+      this.updatePinch();
+      return;
+    }
+
     const world = this.screenToWorld(s.x, s.y);
     this.mouseWorld = world;
     if (Math.hypot(s.x - this.downScreen.x, s.y - this.downScreen.y) > 4) this.moved = true;
@@ -269,7 +323,17 @@ export class Editor {
     this.hoverPin = this.hitPin(world);
   };
 
-  private onUp = () => {
+  private onUp = (e: PointerEvent) => {
+    this.pointers.delete(e.pointerId);
+    if (this.pointers.size < 2) this.pinch = null;
+    // If fingers remain, don't finalize a single-pointer gesture.
+    if (this.pointers.size >= 1) {
+      this.mode = "idle";
+      this.wireFrom = null;
+      this.hoverPin = null;
+      return;
+    }
+
     if (this.mode === "wire" && this.wireFrom) {
       const target = this.hitPin(this.mouseWorld);
       if (target) this.tryConnect(this.wireFrom, target);

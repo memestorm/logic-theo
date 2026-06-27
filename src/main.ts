@@ -24,6 +24,7 @@ const palette = document.getElementById("palette")!;
 const categories: Array<ComponentCategory> = ["Inputs", "Gates", "Outputs"];
 type ComponentCategory = "Inputs" | "Gates" | "Outputs";
 
+let placeOffset = 0;
 for (const cat of categories) {
   const h = document.createElement("h3");
   h.textContent = cat;
@@ -34,13 +35,17 @@ for (const cat of categories) {
     item.className = "palette-item";
     item.draggable = true;
     item.innerHTML = `<span class="swatch">${def.swatch}</span><span>${def.label}</span>`;
+    // Desktop: drag from palette onto the canvas.
     item.addEventListener("dragstart", (e) => {
       e.dataTransfer?.setData("text/plain", def.type);
     });
-    // Click also drops it into the middle of the view (handy on trackpads).
-    item.addEventListener("dblclick", () => {
-      const w = editor.screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2);
+    // Touch + click: tap to drop near the centre of the view (cascaded so they don't stack).
+    item.addEventListener("click", () => {
+      const cx = canvas.clientWidth / 2 + placeOffset;
+      const cy = canvas.clientHeight / 2 + placeOffset;
+      const w = editor.screenToWorld(cx, cy);
       editor.addComponentAt(def.type, w.x, w.y);
+      placeOffset = (placeOffset + 18) % 90;
     });
     palette.appendChild(item);
   }
@@ -116,8 +121,8 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "-" || e.key === "_") editor.adjustInputs(-1);
 });
 
-// Refresh toolbar after any click (selection may have changed).
-canvas.addEventListener("mouseup", () => setTimeout(refreshToolbar, 0));
+// Refresh toolbar after any tap/click (selection may have changed).
+canvas.addEventListener("pointerup", () => setTimeout(refreshToolbar, 0));
 
 // ---------- hint ----------
 document.getElementById("hint")!.textContent =
