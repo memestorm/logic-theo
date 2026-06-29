@@ -84,35 +84,45 @@ document.getElementById("btn-clear")!.addEventListener("click", () => {
 // Context-sensitive tools (input count, clock speed) for the selected item.
 const ctxTools = document.getElementById("ctx-tools")!;
 function refreshToolbar() {
-  const info = editor.selectedInfo();
   ctxTools.innerHTML = "";
-  if (!info) return;
-  if (info.configurableInputs) {
-    addBtn("− input", () => editor.adjustInputs(-1));
-    addBtn("+ input", () => editor.adjustInputs(1));
-  }
-  if (info.isClock) {
-    addBtn("−10", () => editor.adjustClock(-10));
-    addBtn("−1", () => editor.adjustClock(-1));
-    addBtn("+1", () => editor.adjustClock(1));
-    addBtn("+10", () => editor.adjustClock(10));
-    const bpm = editor.getClockBpm();
-    if (bpm !== null) {
-      const label = document.createElement("span");
-      label.className = "btn";
-      label.style.cursor = "default";
-      label.style.opacity = "0.7";
-      label.textContent = `${bpm} BPM`;
-      ctxTools.appendChild(label);
+  const info = editor.selectedInfo();
+  if (info) {
+    if (info.configurableInputs) {
+      addBtn("− input", () => editor.adjustInputs(-1));
+      addBtn("+ input", () => editor.adjustInputs(1));
+    }
+    if (info.isClock) {
+      addBtn("−10", () => editor.adjustClock(-10));
+      addBtn("−1", () => editor.adjustClock(-1));
+      addBtn("+1", () => editor.adjustClock(1));
+      addBtn("+10", () => editor.adjustClock(10));
+      const bpm = editor.getClockBpm();
+      if (bpm !== null) {
+        const label = document.createElement("span");
+        label.className = "btn";
+        label.style.cursor = "default";
+        label.style.opacity = "0.7";
+        label.textContent = `${bpm} BPM`;
+        ctxTools.appendChild(label);
+      }
     }
   }
+  if (editor.hasSelection()) {
+    const del = addBtn("🗑 Delete", () => {
+      editor.deleteSelected();
+      refreshToolbar();
+    });
+    del.style.background = "#a83232";
+    del.style.borderColor = "#c84a4a";
+  }
 }
-function addBtn(label: string, fn: () => void) {
+function addBtn(label: string, fn: () => void): HTMLButtonElement {
   const b = document.createElement("button");
   b.className = "btn";
   b.textContent = label;
   b.addEventListener("click", fn);
   ctxTools.appendChild(b);
+  return b;
 }
 
 // Keyboard shortcuts for input count.
@@ -126,7 +136,7 @@ canvas.addEventListener("pointerup", () => setTimeout(refreshToolbar, 0));
 
 // ---------- hint ----------
 document.getElementById("hint")!.textContent =
-  "Drag parts from the left • drag pin-to-pin to wire • click a switch to toggle • scroll to zoom • Delete removes selected";
+  "Drag parts from the left • drag pin-to-pin to wire • click a switch to toggle • click a wire or part to select, then Delete (or the 🗑 button) to remove • scroll to zoom";
 
 // Debug handle (handy for testing in the console).
 (window as unknown as { lab: unknown }).lab = { circuit, editor, registry };

@@ -168,6 +168,10 @@ export class Editor {
     };
   }
 
+  hasSelection(): boolean {
+    return this.selectedComp !== null || this.selectedWire !== null;
+  }
+
   // ----- event wiring -----
   private panLast: Vec2 = { x: 0, y: 0 };
 
@@ -180,11 +184,13 @@ export class Editor {
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
     this.canvas.addEventListener("contextmenu", (e) => e.preventDefault());
     window.addEventListener("keydown", (e) => {
+      const t = e.target as HTMLElement | null;
+      const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+      if (typing) return;
       if (e.key === "Delete" || e.key === "Backspace") {
-        if (document.activeElement === document.body) {
-          this.deleteSelected();
-          e.preventDefault();
-        }
+        // Always swallow Backspace so it never navigates the browser back.
+        e.preventDefault();
+        if (this.selectedComp || this.selectedWire) this.deleteSelected();
       }
     });
     // palette drag-and-drop
@@ -488,9 +494,20 @@ export class Editor {
         // Rainbow colour based on the target (input) pin index.
         color = RIBBON_COLORS[w.toPin % RIBBON_COLORS.length];
       }
+      const dx = Math.max(24, Math.abs(b.x - a.x) * 0.4);
+      // Selected wire: draw a soft halo behind it first.
+      if (this.selectedWire === w.id) {
+        ctx.strokeStyle = "#6ea8ff";
+        ctx.globalAlpha = 0.4;
+        ctx.lineWidth = 9;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.bezierCurveTo(a.x + dx, a.y, b.x - dx, b.y, b.x, b.y);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
       ctx.strokeStyle = color;
       ctx.lineWidth = this.selectedWire === w.id ? 3.5 : 2.5;
-      const dx = Math.max(24, Math.abs(b.x - a.x) * 0.4);
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.bezierCurveTo(a.x + dx, a.y, b.x - dx, b.y, b.x, b.y);
@@ -501,13 +518,33 @@ export class Editor {
   private drawComponent(c: Component) {
     const ctx = this.ctx;
     const def = registry[c.type];
+    const selected = this.selectedComp === c.id;
     def.draw({
       ctx,
       comp: c,
       inputs: this.sim.inputs.get(c.id) ?? [],
       outputs: this.sim.outputs.get(c.id) ?? [],
-      selected: this.selectedComp === c.id,
+      selected,
     });
+    // Selection halo: dashed rounded rectangle around the component.
+    if (selected) {
+      const { w, h } = compSize(c);
+      ctx.save();
+      ctx.strokeStyle = "#6ea8ff";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
+      const pad = 5;
+      const r = 11;
+      ctx.beginPath();
+      ctx.moveTo(c.x - pad + r, c.y - pad);
+      ctx.arcTo(c.x + w + pad, c.y - pad, c.x + w + pad, c.y + h + pad, r);
+      ctx.arcTo(c.x + w + pad, c.y + h + pad, c.x - pad, c.y + h + pad, r);
+      ctx.arcTo(c.x - pad, c.y + h + pad, c.x - pad, c.y - pad, r);
+      ctx.arcTo(c.x - pad, c.y - pad, c.x + w + pad, c.y - pad, r);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+    }
     // pins
     const { inputs, outputs } = pinPositions(c);
     const ins = this.sim.inputs.get(c.id) ?? [];
