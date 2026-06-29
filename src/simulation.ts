@@ -30,8 +30,12 @@ export class Circuit {
   }
 
   addWire(w: Wire) {
-    // One driver per input pin: drop any existing wire into the same input.
-    this.wires = this.wires.filter((x) => !(x.toComp === w.toComp && x.toPin === w.toPin));
+    // Allow multiple wires into one input pin (wired-OR). Only block exact
+    // duplicates of the same source->target connection.
+    const duplicate = this.wires.some(
+      (x) => x.fromComp === w.fromComp && x.fromPin === w.fromPin && x.toComp === w.toComp && x.toPin === w.toPin
+    );
+    if (duplicate) return;
     this.wires.push(w);
   }
 
@@ -62,10 +66,13 @@ export class Circuit {
       outputs.set(c.id, new Array(registry[c.type].numOutputs(c)).fill(0) as Signal[]);
     }
 
-    // Map each input pin -> its driving output pin.
-    const driver = new Map<string, { comp: string; pin: number }>();
+    // Map each input pin -> all driving output pins (multiple allowed = wired-OR).
+    const drivers = new Map<string, Array<{ comp: string; pin: number }>>();
     for (const w of this.wires) {
-      driver.set(`${w.toComp}:${w.toPin}`, { comp: w.fromComp, pin: w.fromPin });
+      const key = `${w.toComp}:${w.toPin}`;
+      const list = drivers.get(key);
+      if (list) list.push({ comp: w.fromComp, pin: w.fromPin });
+      else drivers.set(key, [{ comp: w.fromComp, pin: w.fromPin }]);
     }
 
     const inputs = new Map<string, Signal[]>();
@@ -78,12 +85,18 @@ export class Circuit {
         const ni = def.numInputs(c);
         const ins: Signal[] = [];
         for (let p = 0; p < ni; p++) {
-          const src = driver.get(`${c.id}:${p}`);
-          if (src) {
-            ins.push((outputs.get(src.comp)?.[src.pin] ?? 0) as Signal);
-          } else {
-            ins.push(0);
+          const srcs = drivers.get(`${c.id}:${p}`);
+          // Wired-OR: the pin is high if any connected source is high.
+          let v: Signal = 0;
+          if (srcs) {
+            for (const s of srcs) {
+              if ((outputs.get(s.comp)?.[s.pin] ?? 0) === 1) {
+                v = 1;
+                break;
+              }
+            }
           }
+          ins.push(v);
         }
         inputs.set(c.id, ins);
         const outs = def.evaluate(ins, c);
