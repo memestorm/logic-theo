@@ -421,7 +421,11 @@ export class Editor {
   }
 
   private hitWire(world: Vec2): string | null {
-    const thr = 6 / this.camera.scale;
+    // Test against the actual bezier curve (matching how wires are drawn),
+    // and pick the nearest wire so overlapping fan-out wires are selectable.
+    const thr = 8 / this.camera.scale;
+    let best: string | null = null;
+    let bestDist = thr;
     for (let i = this.circuit.wires.length - 1; i >= 0; i--) {
       const w = this.circuit.wires[i];
       const from = this.circuit.getComp(w.fromComp);
@@ -429,9 +433,14 @@ export class Editor {
       if (!from || !to) continue;
       const a = pinPositions(from).outputs[w.fromPin];
       const b = pinPositions(to).inputs[w.toPin];
-      if (a && b && distToSegment(world, a, b) < thr) return w.id;
+      if (!a || !b) continue;
+      const d = wireDistance(world, a, b);
+      if (d < bestDist) {
+        bestDist = d;
+        best = w.id;
+      }
     }
-    return null;
+    return best;
   }
 
   // ----- render loop -----
@@ -494,7 +503,7 @@ export class Editor {
         // Rainbow colour based on the target (input) pin index.
         color = RIBBON_COLORS[w.toPin % RIBBON_COLORS.length];
       }
-      const dx = Math.max(24, Math.abs(b.x - a.x) * 0.4);
+      const { c1, c2 } = wireControlPoints(a, b);
       // Selected wire: draw a soft halo behind it first.
       if (this.selectedWire === w.id) {
         ctx.strokeStyle = "#6ea8ff";
@@ -502,7 +511,7 @@ export class Editor {
         ctx.lineWidth = 9;
         ctx.beginPath();
         ctx.moveTo(a.x, a.y);
-        ctx.bezierCurveTo(a.x + dx, a.y, b.x - dx, b.y, b.x, b.y);
+        ctx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, b.x, b.y);
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
@@ -510,7 +519,7 @@ export class Editor {
       ctx.lineWidth = this.selectedWire === w.id ? 3.5 : 2.5;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
-      ctx.bezierCurveTo(a.x + dx, a.y, b.x - dx, b.y, b.x, b.y);
+      ctx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, b.x, b.y);
       ctx.stroke();
     }
   }
@@ -639,6 +648,39 @@ function distToSegment(p: Vec2, a: Vec2, b: Vec2): number {
   let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
   t = Math.max(0, Math.min(1, t));
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+// Control points for the cubic bezier used to draw a wire from a (output) to b (input).
+function wireControlPoints(a: Vec2, b: Vec2): { c1: Vec2; c2: Vec2 } {
+  const dx = Math.max(24, Math.abs(b.x - a.x) * 0.4);
+  return { c1: { x: a.x + dx, y: a.y }, c2: { x: b.x - dx, y: b.y } };
+}
+
+function cubicAt(p0: Vec2, c1: Vec2, c2: Vec2, p1: Vec2, t: number): Vec2 {
+  const mt = 1 - t;
+  const w0 = mt * mt * mt;
+  const w1 = 3 * mt * mt * t;
+  const w2 = 3 * mt * t * t;
+  const w3 = t * t * t;
+  return {
+    x: w0 * p0.x + w1 * c1.x + w2 * c2.x + w3 * p1.x,
+    y: w0 * p0.y + w1 * c1.y + w2 * c2.y + w3 * p1.y,
+  };
+}
+
+// Minimum distance from a point to the wire's bezier curve (sampled as a polyline).
+function wireDistance(world: Vec2, a: Vec2, b: Vec2): number {
+  const { c1, c2 } = wireControlPoints(a, b);
+  const N = 18;
+  let prev = a;
+  let min = Infinity;
+  for (let i = 1; i <= N; i++) {
+    const pt = cubicAt(a, c1, c2, b, i / N);
+    const d = distToSegment(world, prev, pt);
+    if (d < min) min = d;
+    prev = pt;
+  }
+  return min;
 }
 
 function snap(v: number): number {
